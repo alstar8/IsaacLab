@@ -52,6 +52,13 @@ parser.add_argument(
     default=None,
     help="Token-prefix budget used at training time (policy heads count must match).",
 )
+parser.add_argument(
+    "--ar_head",
+    action="store_true",
+    default=False,
+    help="Checkpoint was trained with the autoregressive token head.",
+)
+parser.add_argument("--ar_context_dim", type=int, default=256, help="Context size of the AR head.")
 cli_args.add_rsl_rl_args(parser)
 add_launcher_args(parser)
 args_cli, remaining_args = setup_preset_cli(parser)
@@ -107,6 +114,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: RslRlBaseRun
             "class_name": "oat_rl.multi_categorical:MultiCategoricalDistribution",
             "num_categories": tokenizer.codebook_size,
         }
+        if args_cli.ar_head:
+            train_cfg["actor"]["distribution_cfg"] = {
+                "class_name": "oat_rl.ar_head:ARTokenDistribution",
+                "num_categories": tokenizer.codebook_size,
+                "context_dim": args_cli.ar_context_dim,
+            }
 
         print(f"[INFO] Loading model checkpoint from: {resume_path}")
         runner = OnPolicyRunner(env, train_cfg, log_dir=None, device=agent_cfg.device)

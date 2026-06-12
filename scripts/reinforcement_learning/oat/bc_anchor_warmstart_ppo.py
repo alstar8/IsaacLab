@@ -41,6 +41,7 @@ sys.path.insert(0, _SCRIPT_DIR)
 sys.path.append(os.path.join(_SCRIPT_DIR, "..", "rsl_rl"))
 import cli_args  # isort: skip
 
+from oat_rl.ar_head import ARTokenDistribution
 from oat_rl.token_env_wrapper import OATTokenVecEnvWrapper
 from oat_tok.tokenizer import load_oat_tokenizer
 
@@ -68,12 +69,28 @@ parser.add_argument("--ppo_entropy_coef", type=float, default=None, help="Overri
 parser.add_argument("--ppo_lr", type=float, default=None, help="Override PPO learning rate.")
 parser.add_argument("--ppo_schedule", type=str, default=None, help="Override PPO LR schedule (adaptive|fixed).")
 parser.add_argument("--ppo_desired_kl", type=float, default=None, help="Override PPO desired KL (adaptive schedule).")
+parser.add_argument("--ppo_gamma", type=float, default=None, help="Override PPO discount factor.")
+parser.add_argument("--ppo_lam", type=float, default=None, help="Override PPO GAE lambda.")
 parser.add_argument(
     "--token_prefix",
     type=int,
     default=None,
     help="Token-prefix budget: policy predicts only the first k tokens (ordered tokenizer required).",
 )
+parser.add_argument(
+    "--prefix_curriculum",
+    type=str,
+    default=None,
+    metavar="START:GROW_ITERS",
+    help="Grow the active token prefix from START to the full horizon over GROW_ITERS iterations (e.g. 4:600).",
+)
+parser.add_argument(
+    "--ar_head",
+    action="store_true",
+    default=False,
+    help="Use the autoregressive token head (token k conditioned on tokens 1..k-1).",
+)
+parser.add_argument("--ar_context_dim", type=int, default=256, help="Context size of the AR head (MLP output).")
 cli_args.add_rsl_rl_args(parser)
 add_launcher_args(parser)
 args_cli, remaining_args = setup_preset_cli(parser)
@@ -150,7 +167,11 @@ def behavior_clone(actor, critic, X, tokens, returns, args, device):
             xb = X[idx].to(device)
             yb = tokens[idx].to(device).long()  # [b, K]
             vb = returns[idx].to(device)  # [b, 1]
-            logits = actor.mlp(actor.obs_normalizer(xb))  # [b, K, C]
+            trunk_out = actor.mlp(actor.obs_normalizer(xb))
+            if isinstance(actor.distribution, ARTokenDistribution):
+                logits = actor.distribution.teacher_forced_logits(trunk_out, yb)  # [b, K, C]
+            else:
+                logits = trunk_out  # [b, K, C]
             b, k, c = logits.shape
             ce = F.cross_entropy(logits.reshape(b * k, c), yb.reshape(b * k))
             value = critic.mlp(critic.obs_normalizer(xb))  # [b, 1]
@@ -198,7 +219,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: RslRlBaseRun
         # build environments: inner continuous env + token wrapper
         env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
         inner_env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-        token_env = OATTokenVecEnvWrapper(inner_env, tokenizer, num_tokens=args_cli.token_prefix)
+        token_env = OATTokenVecEnvWrapper(
+            inner_env,
+            tokenizer,
+            num_tokens=args_cli.token_prefix,
+            dynamic_prefix=args_cli.prefix_curriculum is not None,
+        )
         print(
             f"[INFO] Token env: num_actions={token_env.num_actions} tokens x {tokenizer.codebook_size} codes,"
             f" chunk_horizon={token_env.chunk_horizon}"
@@ -214,6 +240,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: RslRlBaseRun
         train_cfg["algorithm"]["bc_anchor_coef"] = args_cli.bc_anchor_coef
         train_cfg["algorithm"]["bc_anchor_iters"] = args_cli.bc_anchor_iters
         train_cfg["algorithm"]["bc_anchor_decay"] = args_cli.bc_anchor_decay
+        if args_cli.ar_head:
+            train_cfg["actor"]["distribution_cfg"] = {
+                "class_name": "oat_rl.ar_head:ARTokenDistribution",
+                "num_categories": tokenizer.codebook_size,
+                "context_dim": args_cli.ar_context_dim,
+            }
+            print(f"[INFO] AR token head: context_dim={args_cli.ar_context_dim}")
+        if args_cli.prefix_curriculum is not None:
+            start_k, grow_iters = (int(v) for v in args_cli.prefix_curriculum.split(":"))
+            train_cfg["actor"]["distribution_cfg"]["class_name"] = (
+                "oat_rl.prefix_curriculum:PrefixCurriculumDistribution"
+            )
+            train_cfg["algorithm"]["class_name"] = "oat_rl.prefix_curriculum:PrefixCurriculumBCAnchorPPO"
+            train_cfg["algorithm"]["prefix_start"] = start_k
+            train_cfg["algorithm"]["prefix_end"] = token_env.num_actions
+            train_cfg["algorithm"]["prefix_grow_iters"] = grow_iters
+            print(f"[INFO] Prefix curriculum: {start_k} -> {token_env.num_actions} over {grow_iters} iters")
         if args_cli.ppo_entropy_coef is not None:
             train_cfg["algorithm"]["entropy_coef"] = args_cli.ppo_entropy_coef
         if args_cli.ppo_lr is not None:
@@ -222,6 +265,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: RslRlBaseRun
             train_cfg["algorithm"]["schedule"] = args_cli.ppo_schedule
         if args_cli.ppo_desired_kl is not None:
             train_cfg["algorithm"]["desired_kl"] = args_cli.ppo_desired_kl
+        if args_cli.ppo_gamma is not None:
+            train_cfg["algorithm"]["gamma"] = args_cli.ppo_gamma
+        if args_cli.ppo_lam is not None:
+            train_cfg["algorithm"]["lam"] = args_cli.ppo_lam
         print(
             f"[INFO] PPO algo: entropy_coef={train_cfg['algorithm']['entropy_coef']}"
             f" lr={train_cfg['algorithm']['learning_rate']} schedule={train_cfg['algorithm']['schedule']}"

@@ -12,6 +12,8 @@ from tensordict import TensorDict
 
 from rsl_rl.env import VecEnv
 
+from oat_rl import prefix_curriculum
+
 
 class OATTokenVecEnvWrapper(VecEnv):
     """Wraps an :class:`RslRlVecEnvWrapper` with OAT token actions.
@@ -26,7 +28,7 @@ class OATTokenVecEnvWrapper(VecEnv):
         to the freshly reset environment (standard open-loop chunking approximation).
     """
 
-    def __init__(self, env, tokenizer, num_tokens: int | None = None) -> None:
+    def __init__(self, env, tokenizer, num_tokens: int | None = None, dynamic_prefix: bool = False) -> None:
         """Initialize the wrapper.
 
         Args:
@@ -36,7 +38,10 @@ class OATTokenVecEnvWrapper(VecEnv):
                 ``latent_horizon``, the policy predicts only the first ``num_tokens``
                 tokens and the decoder reconstructs from that prefix (requires an
                 ordered tokenizer with a safe tail).
+            dynamic_prefix: If True, decode only the prefix given by the shared
+                curriculum state (:mod:`oat_rl.prefix_curriculum`) at each step.
         """
+        self.dynamic_prefix = dynamic_prefix
         self.env = env
         self.tokenizer = tokenizer.eval()
         for p in self.tokenizer.parameters():
@@ -88,6 +93,10 @@ class OATTokenVecEnvWrapper(VecEnv):
         Returns:
             Tuple of (observations, summed rewards, OR-ed dones, merged extras).
         """
+        if self.dynamic_prefix:
+            active_k = prefix_curriculum.get_active_k()
+            if active_k is not None and active_k < token_actions.shape[1]:
+                token_actions = token_actions[:, :active_k]
         with torch.no_grad():
             chunks = self.tokenizer.detokenize(token_actions.long())  # [B, T, action_dim]
 
