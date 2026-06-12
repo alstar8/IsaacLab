@@ -48,3 +48,45 @@ cd ./projects/IsaacLab_release_3_0
 ./isaaclab.sh -p scripts/reinforcement_learning/export_training_curves.py \
   --checkpoint logs/rsl_rl/dexsuite_kuka_allegro/2026-06-11_15-09-40/model_999.pt
 ```
+
+# Eval with success-rate measurement (video + JSON summary)
+```bash
+./isaaclab.sh -p scripts/reinforcement_learning/eval_checkpoint.py \
+  --task Isaac-Dexsuite-Kuka-Allegro-Reorient-v0 \
+  --headless --video --video_length 400 --num_envs 32 --num_steps 900 \
+  --checkpoint logs/rsl_rl/dexsuite_kuka_allegro/2026-06-11_15-09-40/model_750.pt \
+  physics=newton_mjwarp
+```
+
+# OAT (Ordered Action Tokenization) pipeline
+
+Scripts in `scripts/reinforcement_learning/oat/` (vendored OAT core in `oat_tok/`, RSL-RL integration in `oat_rl/`).
+
+```bash
+# 1. Collect action chunks from a trained policy
+./isaaclab.sh -p scripts/reinforcement_learning/oat/collect_actions.py \
+  --task Isaac-Dexsuite-Kuka-Allegro-Reorient-v0 --headless \
+  --num_envs 1024 --num_steps 640 --chunk_horizon 8 \
+  --checkpoint logs/rsl_rl/dexsuite_kuka_allegro/2026-06-11_15-09-40/model_750.pt \
+  --output datasets/oat/actions_model750_T8.pt physics=newton_mjwarp
+
+# 2. Train the OAT tokenizer (no simulator needed)
+python scripts/reinforcement_learning/oat/train_oat_tokenizer.py \
+  --dataset datasets/oat/actions_model750_T8.pt \
+  --output_dir logs/oat/tokenizer_T8_K4 --epochs 50
+
+# 3. Train PPO with discrete OAT-token actions
+./isaaclab.sh -p scripts/reinforcement_learning/oat/train_oat_ppo.py \
+  --task Isaac-Dexsuite-Kuka-Allegro-Reorient-v0 --headless \
+  --num_envs 4096 --max_iterations 400 \
+  --tokenizer logs/oat/tokenizer_T8_K4/oat_tokenizer.pt \
+  --experiment_name dexsuite_kuka_allegro_oat physics=newton_mjwarp
+
+# 4. Evaluate the OAT-token policy (video + success rate)
+./isaaclab.sh -p scripts/reinforcement_learning/oat/eval_oat_checkpoint.py \
+  --task Isaac-Dexsuite-Kuka-Allegro-Reorient-v0 --headless \
+  --video --video_length 400 --num_envs 32 --num_steps 120 \
+  --tokenizer logs/oat/tokenizer_T8_K4/oat_tokenizer.pt \
+  --checkpoint logs/rsl_rl/dexsuite_kuka_allegro_oat/2026-06-11_22-59-11/model_399.pt \
+  physics=newton_mjwarp
+```
