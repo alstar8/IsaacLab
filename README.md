@@ -90,3 +90,24 @@ python scripts/reinforcement_learning/oat/train_oat_tokenizer.py \
   --checkpoint logs/rsl_rl/dexsuite_kuka_allegro_oat/2026-06-11_22-59-11/model_399.pt \
   physics=newton_mjwarp
 ```
+
+# OAT: BC warm-start + anchored PPO (Idea C)
+
+```bash
+# Per-token salience of a tokenizer (tests the "safe tail tokens" premise, no simulator)
+python scripts/reinforcement_learning/oat/token_salience.py \
+  --tokenizer logs/oat/tok_T1_r16_c64/oat_tokenizer.pt \
+  --dataset datasets/oat/actions_model750_T1.pt \
+  --output logs/oat/tok_T1_r16_c64/token_salience.json
+
+# BC warm-start + PPO with an annealed DAgger-style BC anchor
+# (lambda(t) * CE(actor logits, expert tokens) protects the warm start from early-PPO collapse)
+./isaaclab.sh -p scripts/reinforcement_learning/oat/bc_anchor_warmstart_ppo.py \
+  --task Isaac-Dexsuite-Kuka-Allegro-Reorient-v0 --headless \
+  --num_envs 4096 --max_iterations 1000 \
+  --tokenizer logs/oat/tok_T1_r16_c64/oat_tokenizer.pt \
+  --baseline_checkpoint logs/rsl_rl/dexsuite_kuka_allegro/2026-06-11_15-09-40/model_750.pt \
+  --bc_rollout_steps 128 --bc_epochs 80 --ppo_entropy_coef 0.002 \
+  --bc_anchor_coef 0.3 --bc_anchor_iters 400 --bc_anchor_decay cosine \
+  --experiment_name dexsuite_kuka_allegro_oat_anchor physics=newton_mjwarp
+```
