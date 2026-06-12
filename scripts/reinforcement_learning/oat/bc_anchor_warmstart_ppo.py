@@ -68,6 +68,12 @@ parser.add_argument("--ppo_entropy_coef", type=float, default=None, help="Overri
 parser.add_argument("--ppo_lr", type=float, default=None, help="Override PPO learning rate.")
 parser.add_argument("--ppo_schedule", type=str, default=None, help="Override PPO LR schedule (adaptive|fixed).")
 parser.add_argument("--ppo_desired_kl", type=float, default=None, help="Override PPO desired KL (adaptive schedule).")
+parser.add_argument(
+    "--token_prefix",
+    type=int,
+    default=None,
+    help="Token-prefix budget: policy predicts only the first k tokens (ordered tokenizer required).",
+)
 cli_args.add_rsl_rl_args(parser)
 add_launcher_args(parser)
 args_cli, remaining_args = setup_preset_cli(parser)
@@ -192,7 +198,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: RslRlBaseRun
         # build environments: inner continuous env + token wrapper
         env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
         inner_env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-        token_env = OATTokenVecEnvWrapper(inner_env, tokenizer)
+        token_env = OATTokenVecEnvWrapper(inner_env, tokenizer, num_tokens=args_cli.token_prefix)
         print(
             f"[INFO] Token env: num_actions={token_env.num_actions} tokens x {tokenizer.codebook_size} codes,"
             f" chunk_horizon={token_env.chunk_horizon}"
@@ -241,6 +247,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: RslRlBaseRun
         X, tokens, returns = collect_bc_dataset(
             inner_env, baseline_policy, actor, critic, tokenizer, args_cli.bc_rollout_steps, gamma
         )
+        tokens = tokens[:, : token_env.num_actions]  # truncate targets to the token-prefix budget
         print(
             f"[INFO] BC dataset: X={tuple(X.shape)} tokens={tuple(tokens.shape)}"
             f" returns(mean={returns.mean():.2f} std={returns.std():.2f})"

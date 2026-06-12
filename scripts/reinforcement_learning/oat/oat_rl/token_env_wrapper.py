@@ -26,12 +26,16 @@ class OATTokenVecEnvWrapper(VecEnv):
         to the freshly reset environment (standard open-loop chunking approximation).
     """
 
-    def __init__(self, env, tokenizer) -> None:
+    def __init__(self, env, tokenizer, num_tokens: int | None = None) -> None:
         """Initialize the wrapper.
 
         Args:
             env: The inner :class:`RslRlVecEnvWrapper` instance.
             tokenizer: A trained, frozen :class:`OATTok` instance on the env device.
+            num_tokens: Optional token-prefix budget. If smaller than the tokenizer's
+                ``latent_horizon``, the policy predicts only the first ``num_tokens``
+                tokens and the decoder reconstructs from that prefix (requires an
+                ordered tokenizer with a safe tail).
         """
         self.env = env
         self.tokenizer = tokenizer.eval()
@@ -40,7 +44,9 @@ class OATTokenVecEnvWrapper(VecEnv):
 
         self.chunk_horizon = tokenizer.decoder.sample_horizon
         self.num_envs = env.num_envs
-        self.num_actions = tokenizer.latent_horizon
+        self.num_actions = num_tokens if num_tokens is not None else tokenizer.latent_horizon
+        if self.num_actions > tokenizer.latent_horizon:
+            raise ValueError(f"num_tokens={num_tokens} exceeds latent_horizon={tokenizer.latent_horizon}")
         self.device = env.device
         self.max_episode_length = max(env.max_episode_length // self.chunk_horizon, 1)
 

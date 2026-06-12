@@ -46,6 +46,12 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment.")
 parser.add_argument("--tokenizer", type=str, required=True, help="Path to the trained OAT tokenizer checkpoint.")
 parser.add_argument("--label", type=str, default=None, help="Optional label for the eval output folder.")
+parser.add_argument(
+    "--token_prefix",
+    type=int,
+    default=None,
+    help="Token-prefix budget used at training time (policy heads count must match).",
+)
 cli_args.add_rsl_rl_args(parser)
 add_launcher_args(parser)
 args_cli, remaining_args = setup_preset_cli(parser)
@@ -94,7 +100,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: RslRlBaseRun
             env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
         env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-        env = OATTokenVecEnvWrapper(env, tokenizer)
+        env = OATTokenVecEnvWrapper(env, tokenizer, num_tokens=args_cli.token_prefix)
 
         train_cfg = agent_cfg.to_dict()
         train_cfg["actor"]["distribution_cfg"] = {

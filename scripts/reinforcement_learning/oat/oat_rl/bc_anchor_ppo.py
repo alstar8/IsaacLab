@@ -148,9 +148,11 @@ class BCAnchorPPO(PPO):
 
             # annealed BC anchor: CE between current token logits and expert tokens at visited states
             if bc_coef > 0.0:
-                expert_tokens = self._expert_token_targets(batch.observations)  # [B, K]
+                expert_tokens = self._expert_token_targets(batch.observations)  # [B, K_full]
                 logits = self.actor.output_distribution_params[0]  # [B, K, C], requires grad
                 b, k, c = logits.shape
+                # actor may use a token-prefix budget smaller than the tokenizer horizon
+                expert_tokens = expert_tokens[:, :k]
                 bc_loss = F.cross_entropy(logits.reshape(b * k, c), expert_tokens.reshape(b * k))
                 loss = loss + bc_coef * bc_loss
                 mean_bc_loss += bc_loss.item()

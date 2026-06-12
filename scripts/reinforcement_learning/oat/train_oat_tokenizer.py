@@ -42,6 +42,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min_lr_ratio", type=float, default=0.05, help="Final LR as fraction of peak (cosine).")
     parser.add_argument("--warmup_epochs", type=int, default=2, help="Linear LR warmup epochs.")
     parser.add_argument("--norm_mode", type=str, default="std", choices=["std", "minmax"], help="Normalizer fit mode.")
+    parser.add_argument(
+        "--token_dropout_mode",
+        type=str,
+        default="pow2",
+        choices=["pow2", "uniform", "uniform_pow2", "linear_biased", "quadratic_biased", "cubic_biased", "disable"],
+        help="Nested-dropout prefix sampling mode for the decoder.",
+    )
+    parser.add_argument(
+        "--decoder_type",
+        type=str,
+        default="single_pass",
+        choices=["single_pass", "boosted"],
+        help="Decoder architecture: nested-dropout transformer or boosted residual stages.",
+    )
+    parser.add_argument(
+        "--shrinkage",
+        type=float,
+        default=0.85,
+        help="Geometric amplitude decay per token stage (boosted decoder only).",
+    )
     parser.add_argument("--val_fraction", type=float, default=0.05, help="Validation split fraction.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--device", type=str, default="cuda", help="Device.")
@@ -82,6 +102,9 @@ def main() -> int:
         "chunk_horizon": horizon,
         "num_registers": args.num_registers,
         "fsq_levels": args.fsq_levels,
+        "token_dropout_mode": args.token_dropout_mode,
+        "decoder_type": args.decoder_type,
+        "shrinkage": args.shrinkage,
     }
     tokenizer = build_oat_tokenizer(**config).to(device)
     tokenizer.normalizer.fit(train_actions, mode=args.norm_mode)
